@@ -1,0 +1,1118 @@
+# API Architecture Style Guide - Feature-Sliced Design
+
+> Library-agnostic guide for API architecture in Next.js projects following Feature-Sliced Design (FSD)
+
+## Table of Contents
+
+1. [High-Level Architecture](#high-level-architecture)
+2. [Directory Structure](#directory-structure)
+3. [File Naming Conventions](#file-naming-conventions)
+4. [Layer Responsibilities](#layer-responsibilities)
+5. [Import Rules](#import-rules)
+6. [Code Organization Within Files](#code-organization-within-files)
+7. [Examples](#examples)
+
+---
+
+## High-Level Architecture
+
+### The Four Layers of API Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  App Layer (app/api/)                                   │
+│  - Next.js API Route Handlers (thin proxies)            │
+│  - Only routing, minimal validation                     │
+└─────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────┐
+│  Features/Entities Layer                                 │
+│  - Business logic and domain models                      │
+│  - API services per entity                               │
+│  - Data fetching hooks (library-agnostic)                │
+└─────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────┐
+│  Shared Layer (shared/api/)                              │
+│  - HTTP client configuration                             │
+│  - Error handling utilities                              │
+│  - Common API types                                      │
+└─────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────┐
+│  External API                                            │
+│  - Backend endpoints                                     │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Key Principles
+
+1. **Separation of Concerns**
+   - Shared: Infrastructure (HTTP client, error handling)
+   - Entities: Domain logic (services, models, queries)
+   - App: Routing only (thin API route handlers)
+
+2. **Import Rule Compliance**
+   - Lower layers cannot import from higher layers
+   - Shared → cannot import from Entities/Features/App
+   - Entities → can import from Shared only
+   - App → can import from all layers
+
+3. **Library Agnostic**
+   - Works with SWR, TanStack Query, Apollo, or any data fetching library
+   - Core architecture remains the same regardless of library choice
+
+---
+
+## Directory Structure
+
+### Complete Structure
+
+```
+src/
+├── shared/
+│   └── api/
+│       ├── client.ts              # HTTP client (fetch/axios wrapper)
+│       ├── error-handler.ts       # Error utilities
+│       ├── types.ts               # Common API types
+│       └── index.ts               # Public API exports
+│
+├── entities/
+│   ├── appointment/
+│   │   ├── api/
+│   │   │   ├── service.ts         # appointment.service.ts
+│   │   │   ├── endpoints.ts       # Endpoint constants
+│   │   │   └── index.ts           # Public API
+│   │   ├── model/
+│   │   │   ├── types.ts           # Domain types
+│   │   │   ├── schemas.ts         # Validation schemas (Zod/Valibot)
+│   │   │   ├── useAppointments.ts # Data fetching hook
+│   │   │   └── index.ts           # Public API
+│   │   ├── ui/
+│   │   │   └── ...                # UI components
+│   │   └── index.ts               # Entity public API
+│   │
+│   ├── auth/
+│   │   ├── api/
+│   │   │   ├── service.ts         # auth.service.ts
+│   │   │   └── endpoints.ts
+│   │   ├── model/
+│   │   │   ├── types.ts
+│   │   │   └── useAuth.ts
+│   │   └── index.ts
+│   │
+│   └── pricing/
+│       ├── api/
+│       │   └── service.ts
+│       ├── model/
+│       │   ├── types.ts
+│       │   └── usePricing.ts
+│       └── index.ts
+│
+└── app/
+    └── api/
+        ├── auth/
+        │   └── logout/
+        │       └── route.ts       # Thin proxy to auth.service
+        └── bookings/
+            └── hold/
+                └── route.ts       # Thin proxy to booking.service
+```
+
+### When to Use Each Location
+
+| Location | Use When | Example |
+|----------|----------|---------|
+| `shared/api/` | Infrastructure, reusable across all entities | HTTP client, error handler |
+| `entities/[entity]/api/` | Entity-specific API calls | `appointment.service.ts`, `auth.service.ts` |
+| `entities/[entity]/model/` | Business logic, data fetching hooks | `useAppointments.ts`, types, schemas |
+| `app/api/` | Next.js routing only | Thin route handlers |
+
+---
+
+## File Naming Conventions
+
+### Services
+
+```
+✅ CORRECT
+entities/auth/api/service.ts
+entities/appointment/api/service.ts
+
+❌ INCORRECT
+entities/auth/api/auth.service.ts      # Redundant entity name
+entities/auth/api/authService.ts       # No .service suffix
+entities/auth/api/AuthService.ts       # PascalCase for non-components
+```
+
+**Rule**: Always `service.ts` inside the entity's `api/` folder.
+
+### Hooks
+
+```
+✅ CORRECT
+entities/appointment/model/useAppointments.ts
+entities/auth/model/useAuth.ts
+entities/pricing/model/usePricing.ts
+
+❌ INCORRECT
+entities/appointment/model/use-appointments.ts  # kebab-case
+entities/appointment/model/useappointments.ts   # Missing camelCase
+entities/appointment/hooks/useAppointments.ts   # Wrong segment (use model/)
+```
+
+**Rule**: `use[EntityName].ts` in camelCase, inside `model/` segment.
+
+### Types and Schemas
+
+```
+✅ CORRECT
+entities/appointment/model/types.ts
+entities/appointment/model/schemas.ts
+
+❌ INCORRECT
+entities/appointment/model/appointment-types.ts  # Redundant prefix
+entities/appointment/model/Types.ts              # PascalCase
+entities/appointment/api/types.ts                # Types belong in model/
+```
+
+**Rule**: Always `types.ts` and `schemas.ts` in `model/` folder.
+
+### Endpoints
+
+```
+✅ CORRECT
+entities/appointment/api/endpoints.ts
+shared/api/endpoints.ts                # If using single global constant
+
+❌ INCORRECT
+entities/appointment/api/appointment-endpoints.ts
+entities/appointment/api/ENDPOINTS.ts
+```
+
+**Rule**: `endpoints.ts` per entity, or single global in `shared/api/`.
+
+### API Route Handlers
+
+```
+✅ CORRECT
+app/api/auth/logout/route.ts
+app/api/bookings/hold/route.ts
+
+❌ INCORRECT
+app/api/auth/logout.ts                 # Must be route.ts for Next.js
+app/api/auth/logout/index.ts           # Must be route.ts
+```
+
+**Rule**: Always `route.ts` for Next.js API routes.
+
+---
+
+## Layer Responsibilities
+
+### Shared Layer (`shared/api/`)
+
+**Purpose**: Infrastructure and utilities reusable across all entities.
+
+**Contains**:
+- HTTP client wrapper (fetch/axios)
+- Error handling utilities
+- Common types (not domain-specific)
+- Request/response interceptors
+
+**Does NOT contain**:
+- Business logic
+- Domain-specific requests
+- Data transformation logic
+
+**Example**:
+
+```typescript
+// shared/api/client.ts
+export class ApiClient {
+  async get<T>(endpoint: string, options?: RequestInit): Promise<Response> {
+    const url = `${process.env.NEXT_PUBLIC_API_URL}${endpoint}`;
+    return fetch(url, { method: 'GET', ...options });
+  }
+
+  async post<T>(endpoint: string, data?: unknown, options?: RequestInit): Promise<Response> {
+    const url = `${process.env.NEXT_PUBLIC_API_URL}${endpoint}`;
+    return fetch(url, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+  }
+}
+
+export const apiClient = new ApiClient();
+```
+
+### Entities Layer (`entities/[entity]/`)
+
+**Purpose**: Domain models and business logic per entity.
+
+**Contains**:
+
+1. **`api/` segment**
+   - Service with entity-specific API calls
+   - Endpoint constants for this entity
+   - Request/response transformations
+
+2. **`model/` segment**
+   - Domain types
+   - Validation schemas (Zod, Valibot)
+   - Data fetching hooks (library-agnostic)
+   - Business logic functions
+
+**Does NOT contain**:
+- UI components (those go in `ui/`)
+- Generic utilities (those go in `shared/`)
+
+**Example**:
+
+```typescript
+// entities/appointment/api/service.ts
+import { apiClient } from '@/shared/api';
+import { APPOINTMENT_ENDPOINTS } from './endpoints';
+import type { HoldSlotRequest, HoldSlotResponse } from '../model/types';
+
+export const appointmentService = {
+  async holdSlot(data: HoldSlotRequest): Promise<Response> {
+    return apiClient.post(APPOINTMENT_ENDPOINTS.HOLD, data);
+  },
+
+  async releaseSlot(bookingId: string): Promise<Response> {
+    return apiClient.post(APPOINTMENT_ENDPOINTS.RELEASE, { booking_id: bookingId });
+  },
+};
+```
+
+```typescript
+// entities/appointment/model/useAppointments.ts
+import useSWR from 'swr';
+import { appointmentService } from '../api/service';
+import type { AvailableSlots } from './types';
+
+export function useAvailableSlots(date: string | null) {
+  const { data, error, isLoading, mutate } = useSWR<AvailableSlots>(
+    date ? `/api/slots?date=${date}` : null,
+    async () => {
+      const response = await appointmentService.getAvailableSlots(date!);
+      if (!response.ok) throw new Error('Failed to fetch slots');
+      return response.json();
+    }
+  );
+
+  return { slots: data, error, isLoading, refresh: mutate };
+}
+```
+
+### App Layer (`app/api/`)
+
+**Purpose**: Next.js routing only. Thin proxies to entity services.
+
+**Contains**:
+- Minimal validation (required fields only)
+- Authentication checks
+- Calls to entity services
+- Response formatting
+
+**Does NOT contain**:
+- Business logic
+- Data transformations
+- Complex validation (use entity schemas)
+
+**Example**:
+
+```typescript
+// app/api/auth/logout/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { authService } from '@/entities/auth';
+import { getAuthHeaders } from '@/shared/api';
+
+export async function POST(request: NextRequest) {
+  try {
+    const authHeaders = await getAuthHeaders(request);
+
+    if (!authHeaders) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const response = await authService.signOut(authHeaders);
+
+    if (!response.ok) {
+      console.error('Logout failed:', response.status);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Logout error:', error);
+    return NextResponse.json({ success: true }); // Always succeed client-side
+  }
+}
+```
+
+---
+
+## Import Rules
+
+### Import Order
+
+**Rule**: Organize imports from lowest to highest layer.
+
+```typescript
+// ✅ CORRECT ORDER
+// 1. External libraries
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+
+// 2. Shared layer
+import { apiClient, handleApiError } from '@/shared/api';
+
+// 3. Entities layer
+import { appointmentService } from '@/entities/appointment';
+import type { HoldSlotRequest } from '@/entities/appointment';
+
+// 4. Features layer (if applicable)
+import { createBookingAction } from '@/features/booking';
+
+// 5. Current layer (relative imports)
+import { validateBookingData } from './utils';
+```
+
+### Allowed Import Directions
+
+```
+┌──────────────────────────────────────────┐
+│  ✅ ALLOWED                               │
+├──────────────────────────────────────────┤
+│  App → Features/Entities → Shared        │
+│  Features → Entities → Shared            │
+│  Entities → Shared                       │
+│  Shared → (nothing)                      │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│  ❌ FORBIDDEN                             │
+├──────────────────────────────────────────┤
+│  Shared → Entities                       │
+│  Shared → Features                       │
+│  Entities → Features                     │
+│  Lower layer → Higher layer (always)     │
+└──────────────────────────────────────────┘
+```
+
+### Path Aliases
+
+**Rule**: Always use path aliases, never relative imports across layers.
+
+```typescript
+// ✅ CORRECT
+import { apiClient } from '@/shared/api';
+import { appointmentService } from '@/entities/appointment';
+
+// ❌ INCORRECT
+import { apiClient } from '../../../shared/api/client';
+import { appointmentService } from '../../entities/appointment/api/service';
+```
+
+### Public API Pattern
+
+**Rule**: Each layer/slice exports through `index.ts` (public API).
+
+```typescript
+// entities/appointment/index.ts
+export { appointmentService } from './api/service';
+export { useAppointments, useAvailableSlots } from './model/useAppointments';
+export type { Appointment, HoldSlotRequest } from './model/types';
+
+// Usage elsewhere:
+import { appointmentService, useAppointments } from '@/entities/appointment';
+```
+
+---
+
+## Code Organization Within Files
+
+### Service Files (`entities/[entity]/api/service.ts`)
+
+**Order of declarations**:
+
+1. Imports
+2. Type definitions (if not in separate types file)
+3. Service object with methods
+4. Helper functions (if any)
+
+```typescript
+// 1. IMPORTS
+import { apiClient } from '@/shared/api';
+import { APPOINTMENT_ENDPOINTS } from './endpoints';
+import type { HoldSlotRequest, HoldSlotResponse } from '../model/types';
+
+// 2. TYPE DEFINITIONS (if needed locally)
+interface ServiceOptions {
+  timeout?: number;
+}
+
+// 3. SERVICE OBJECT
+export const appointmentService = {
+  /**
+   * Hold a time slot temporarily
+   */
+  async holdSlot(data: HoldSlotRequest, options?: ServiceOptions): Promise<Response> {
+    return apiClient.post(APPOINTMENT_ENDPOINTS.HOLD, data, {
+      signal: options?.timeout ? AbortSignal.timeout(options.timeout) : undefined,
+    });
+  },
+
+  /**
+   * Release a held time slot
+   */
+  async releaseSlot(bookingId: string): Promise<Response> {
+    return apiClient.post(APPOINTMENT_ENDPOINTS.RELEASE, { booking_id: bookingId });
+  },
+
+  /**
+   * Get available slots for a date
+   */
+  async getAvailableSlots(date: string): Promise<Response> {
+    return apiClient.get(`${APPOINTMENT_ENDPOINTS.SLOTS}?date=${date}`);
+  },
+};
+
+// 4. HELPER FUNCTIONS (if any)
+function buildSlotKey(date: string, time: string): string {
+  return `${date}_${time}`;
+}
+```
+
+### Hook Files (`entities/[entity]/model/use[Entity].ts`)
+
+**Order of declarations**:
+
+1. Imports
+2. Type definitions
+3. Main hook function
+4. Helper hooks (if any)
+5. Helper functions
+
+```typescript
+// 1. IMPORTS
+import useSWR from 'swr';
+import { appointmentService } from '../api/service';
+import type { AvailableSlots, TimeSlot } from './types';
+
+// 2. TYPE DEFINITIONS
+interface UseAvailableSlotsOptions {
+  refreshInterval?: number;
+  revalidateOnFocus?: boolean;
+}
+
+// 3. MAIN HOOK
+/**
+ * Fetch available appointment slots for a specific date
+ * 
+ * @param date - Date in YYYY-MM-DD format
+ * @param options - SWR configuration options
+ * @returns Available slots with loading and error states
+ */
+export function useAvailableSlots(
+  date: string | null,
+  options?: UseAvailableSlotsOptions
+) {
+  const { data, error, isLoading, mutate } = useSWR<AvailableSlots>(
+    date ? `/slots/${date}` : null,
+    () => fetchSlots(date!),
+    {
+      dedupingInterval: 60 * 1000,
+      revalidateOnFocus: options?.revalidateOnFocus ?? true,
+      refreshInterval: options?.refreshInterval,
+    }
+  );
+
+  return {
+    slots: data?.slots ?? [],
+    isLoading,
+    error: error?.message,
+    refresh: mutate,
+  };
+}
+
+// 4. HELPER HOOKS (if any)
+function useSlotCache() {
+  // Internal hook logic
+}
+
+// 5. HELPER FUNCTIONS
+async function fetchSlots(date: string): Promise<AvailableSlots> {
+  const response = await appointmentService.getAvailableSlots(date);
+  if (!response.ok) {
+    throw new Error('Failed to fetch slots');
+  }
+  return response.json();
+}
+```
+
+### Type Files (`entities/[entity]/model/types.ts`)
+
+**Order of declarations**:
+
+1. Request types
+2. Response types
+3. Domain types
+4. Utility types
+
+```typescript
+// 1. REQUEST TYPES
+export interface HoldSlotRequest {
+  clinic_id: string;
+  date: string;
+  slot_time: string;
+}
+
+export interface ReleaseSlotRequest {
+  booking_id: string;
+}
+
+// 2. RESPONSE TYPES
+export interface HoldSlotResponse {
+  id: string;
+  clinic_id: string;
+  date: string;
+  slot_time: string;
+  expires_at: string;
+}
+
+export interface ErrorResponse {
+  errors: string[];
+  message?: string;
+}
+
+// 3. DOMAIN TYPES
+export interface Appointment {
+  id: string;
+  date: string;
+  time: string;
+  status: AppointmentStatus;
+  customer: {
+    name: string;
+    email: string;
+  };
+}
+
+export type AppointmentStatus = 'pending' | 'confirmed' | 'cancelled';
+
+// 4. UTILITY TYPES
+export type AppointmentInput = Omit<Appointment, 'id' | 'status'>;
+```
+
+### API Route Files (`app/api/[...]/route.ts`)
+
+**Order of declarations**:
+
+1. Imports
+2. Route handler functions (GET, POST, PUT, DELETE)
+3. Helper functions (if needed)
+
+```typescript
+// 1. IMPORTS
+import { NextRequest, NextResponse } from 'next/server';
+import { appointmentService } from '@/entities/appointment';
+import type { HoldSlotRequest } from '@/entities/appointment';
+import { handleApiError, validateRequiredFields } from '@/shared/api';
+
+// 2. ROUTE HANDLERS
+/**
+ * POST /api/bookings/hold
+ * Hold a time slot temporarily
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json() as HoldSlotRequest;
+
+    // Validate required fields
+    const validation = validateRequiredFields(body, ['clinic_id', 'date', 'slot_time']);
+    if (!validation.valid) {
+      return validation.response;
+    }
+
+    // Call service
+    const response = await appointmentService.holdSlot(body);
+
+    // Handle response
+    const data = await response.json();
+
+    if (!response.ok) {
+      return NextResponse.json(data, { status: response.status });
+    }
+
+    return NextResponse.json(data, { status: 201 });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+
+/**
+ * DELETE /api/bookings/hold
+ * Release a held time slot
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const { booking_id } = await request.json();
+
+    if (!booking_id) {
+      return NextResponse.json(
+        { error: 'booking_id is required' },
+        { status: 400 }
+      );
+    }
+
+    const response = await appointmentService.releaseSlot(booking_id);
+    const data = await response.json();
+
+    return NextResponse.json(data);
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+
+// 3. HELPER FUNCTIONS (if needed)
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return 'An unexpected error occurred';
+}
+```
+
+---
+
+## Examples
+
+### Example 1: Complete Entity (Appointment)
+
+```
+entities/appointment/
+├── api/
+│   ├── service.ts
+│   ├── endpoints.ts
+│   └── index.ts
+├── model/
+│   ├── types.ts
+│   ├── schemas.ts
+│   ├── useAppointments.ts
+│   └── index.ts
+├── ui/
+│   └── AppointmentCard.tsx
+└── index.ts
+```
+
+**entities/appointment/api/endpoints.ts**
+```typescript
+export const APPOINTMENT_ENDPOINTS = {
+  HOLD: '/public/bookings/hold',
+  RELEASE: '/public/bookings/release',
+  SLOTS: '/public/slots',
+  CREATE: '/bookings',
+} as const;
+```
+
+**entities/appointment/api/service.ts**
+```typescript
+import { apiClient } from '@/shared/api';
+import { APPOINTMENT_ENDPOINTS } from './endpoints';
+import type { HoldSlotRequest, HoldSlotResponse } from '../model/types';
+
+export const appointmentService = {
+  async holdSlot(data: HoldSlotRequest): Promise<Response> {
+    return apiClient.post(APPOINTMENT_ENDPOINTS.HOLD, data);
+  },
+
+  async releaseSlot(bookingId: string): Promise<Response> {
+    return apiClient.post(APPOINTMENT_ENDPOINTS.RELEASE, { booking_id: bookingId });
+  },
+
+  async getAvailableSlots(date: string): Promise<Response> {
+    return apiClient.get(`${APPOINTMENT_ENDPOINTS.SLOTS}?date=${date}`);
+  },
+};
+```
+
+**entities/appointment/api/index.ts**
+```typescript
+export { appointmentService } from './service';
+export { APPOINTMENT_ENDPOINTS } from './endpoints';
+```
+
+**entities/appointment/model/types.ts**
+```typescript
+export interface HoldSlotRequest {
+  clinic_id: string;
+  date: string;
+  slot_time: string;
+}
+
+export interface HoldSlotResponse {
+  id: string;
+  expires_at: string;
+}
+
+export interface TimeSlot {
+  time: string;
+  available: boolean;
+}
+
+export interface AvailableSlots {
+  date: string;
+  slots: TimeSlot[];
+}
+```
+
+**entities/appointment/model/useAppointments.ts**
+```typescript
+import useSWR from 'swr';
+import { appointmentService } from '../api/service';
+import type { AvailableSlots } from './types';
+
+export function useAvailableSlots(date: string | null) {
+  const { data, error, isLoading, mutate } = useSWR<AvailableSlots>(
+    date ? `/slots/${date}` : null,
+    async () => {
+      if (!date) throw new Error('Date is required');
+      const response = await appointmentService.getAvailableSlots(date);
+      if (!response.ok) throw new Error('Failed to fetch slots');
+      return response.json();
+    },
+    {
+      dedupingInterval: 60 * 1000,
+      revalidateOnFocus: true,
+    }
+  );
+
+  return {
+    slots: data?.slots ?? [],
+    isLoading,
+    error: error?.message,
+    refresh: mutate,
+  };
+}
+```
+
+**entities/appointment/model/index.ts**
+```typescript
+export { useAvailableSlots } from './useAppointments';
+export type { HoldSlotRequest, AvailableSlots, TimeSlot } from './types';
+```
+
+**entities/appointment/index.ts** (Public API)
+```typescript
+export { appointmentService } from './api';
+export { useAvailableSlots } from './model';
+export type { HoldSlotRequest, AvailableSlots } from './model';
+```
+
+### Example 2: API Route Handler
+
+**app/api/bookings/hold/route.ts**
+```typescript
+import { NextRequest, NextResponse } from 'next/server';
+import { appointmentService } from '@/entities/appointment';
+import type { HoldSlotRequest } from '@/entities/appointment';
+import { validateRequiredFields, handleApiError } from '@/shared/api';
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json() as HoldSlotRequest;
+
+    const validation = validateRequiredFields(body, ['clinic_id', 'date', 'slot_time']);
+    if (!validation.valid) {
+      return validation.response;
+    }
+
+    const response = await appointmentService.holdSlot(body);
+    const data = await response.json();
+
+    if (!response.ok) {
+      return NextResponse.json(data, { status: response.status });
+    }
+
+    return NextResponse.json(data, { status: 201 });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+```
+
+### Example 3: Using in a Component
+
+**features/booking/ui/AppointmentScheduler.tsx**
+```typescript
+'use client';
+
+import { useAvailableSlots } from '@/entities/appointment';
+import { appointmentService } from '@/entities/appointment';
+import type { TimeSlot } from '@/entities/appointment';
+
+export function AppointmentScheduler() {
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const { slots, isLoading, error, refresh } = useAvailableSlots(selectedDate);
+
+  async function handleSlotClick(slot: TimeSlot) {
+    try {
+      const response = await appointmentService.holdSlot({
+        clinic_id: 'clinic-123',
+        date: selectedDate!,
+        slot_time: slot.time,
+      });
+
+      if (response.ok) {
+        refresh(); // Refresh available slots
+      }
+    } catch (error) {
+      console.error('Failed to hold slot:', error);
+    }
+  }
+
+  if (isLoading) return <div>Loading...</div>;
+  if (error) return <div>Error: {error}</div>;
+
+  return (
+    <div>
+      {slots.map((slot) => (
+        <button
+          key={slot.time}
+          onClick={() => handleSlotClick(slot)}
+          disabled={!slot.available}
+        >
+          {slot.time}
+        </button>
+      ))}
+    </div>
+  );
+}
+```
+
+### Example 4: Library-Agnostic Hook Pattern
+
+The same hook pattern works with different libraries:
+
+**With SWR:**
+```typescript
+import useSWR from 'swr';
+
+export function useAvailableSlots(date: string | null) {
+  const { data, error, isLoading, mutate } = useSWR(
+    date ? `/slots/${date}` : null,
+    () => fetchSlots(date!)
+  );
+
+  return { slots: data, error, isLoading, refresh: mutate };
+}
+```
+
+**With TanStack Query:**
+```typescript
+import { useQuery } from '@tanstack/react-query';
+
+export function useAvailableSlots(date: string | null) {
+  const { data, error, isLoading, refetch } = useQuery({
+    queryKey: ['slots', date],
+    queryFn: () => fetchSlots(date!),
+    enabled: !!date,
+  });
+
+  return { slots: data, error, isLoading, refresh: refetch };
+}
+```
+
+**With Apollo (GraphQL):**
+```typescript
+import { useQuery } from '@apollo/client';
+import { GET_AVAILABLE_SLOTS } from './queries';
+
+export function useAvailableSlots(date: string | null) {
+  const { data, error, loading, refetch } = useQuery(GET_AVAILABLE_SLOTS, {
+    variables: { date },
+    skip: !date,
+  });
+
+  return { slots: data?.slots, error, isLoading: loading, refresh: refetch };
+}
+```
+
+**Key**: The return interface stays consistent regardless of library.
+
+---
+
+## Checklist for New API Integration
+
+When adding a new entity with API integration:
+
+- [ ] Create entity folder in `entities/[entity-name]/`
+- [ ] Add `api/service.ts` with service methods
+- [ ] Add `api/endpoints.ts` with endpoint constants
+- [ ] Add `api/index.ts` for public API exports
+- [ ] Add `model/types.ts` with request/response types
+- [ ] Add `model/schemas.ts` with validation schemas (if needed)
+- [ ] Add `model/use[Entity].ts` with data fetching hook(s)
+- [ ] Add `model/index.ts` for public API exports
+- [ ] Add `index.ts` at entity root for public API
+- [ ] Create API route handler in `app/api/` (if needed)
+- [ ] Import entity through public API: `@/entities/[entity-name]`
+- [ ] Document any special authentication requirements
+- [ ] Add error handling for common failure scenarios
+
+---
+
+## Migration Guide
+
+### From Unstructured to FSD
+
+1. **Identify Entities**: Group your API calls by business domain
+2. **Move Infrastructure**: HTTP client → `shared/api/`
+3. **Create Entity Services**: API calls → `entities/[entity]/api/service.ts`
+4. **Extract Hooks**: Data fetching → `entities/[entity]/model/use[Entity].ts`
+5. **Simplify Routes**: API routes → thin proxies in `app/api/`
+6. **Update Imports**: Use public APIs through `index.ts` files
+
+### Before (Unstructured)
+```
+src/
+├── lib/
+│   ├── api-calls.ts           # Everything mixed together
+│   └── fetch-data.ts
+├── hooks/
+│   └── use-data.ts            # Mixed concerns
+└── app/api/
+    └── endpoint/route.ts      # Fat handlers with business logic
+```
+
+### After (FSD)
+```
+src/
+├── shared/api/
+│   └── client.ts              # Infrastructure only
+├── entities/
+│   └── appointment/
+│       ├── api/service.ts     # Domain API calls
+│       └── model/
+│           └── useAppointments.ts  # Domain hooks
+└── app/api/
+    └── endpoint/route.ts      # Thin proxy
+```
+
+---
+
+## Anti-Patterns to Avoid
+
+### ❌ Business Logic in API Routes
+
+```typescript
+// ❌ BAD - Business logic in route handler
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  
+  // Validation logic
+  if (!body.email || !body.email.includes('@')) {
+    return NextResponse.json({ error: 'Invalid email' }, { status: 400 });
+  }
+  
+  // Data transformation
+  const transformedData = {
+    ...body,
+    email: body.email.toLowerCase(),
+    name: body.name.trim(),
+  };
+  
+  // Complex error handling
+  const response = await fetch(...);
+  // ...
+}
+
+// ✅ GOOD - Delegate to entity service
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  const response = await authService.signUp(body);
+  return handleServiceResponse(response);
+}
+```
+
+### ❌ Cross-Layer Imports
+
+```typescript
+// ❌ BAD - Shared importing from Entities
+// shared/api/client.ts
+import { authService } from '@/entities/auth';  // FORBIDDEN
+
+// ✅ GOOD - Entities importing from Shared
+// entities/auth/api/service.ts
+import { apiClient } from '@/shared/api';  // Allowed
+```
+
+### ❌ Bypassing Public API
+
+```typescript
+// ❌ BAD - Direct import to internal file
+import { appointmentService } from '@/entities/appointment/api/service';
+
+// ✅ GOOD - Import through public API
+import { appointmentService } from '@/entities/appointment';
+```
+
+### ❌ Mixing Concerns in Hooks
+
+```typescript
+// ❌ BAD - Hook with API call and UI logic
+export function useAppointments() {
+  const [isModalOpen, setIsModalOpen] = useState(false);  // UI state
+  const { data } = useSWR('/slots', fetcher);  // Data fetching
+  
+  return { slots: data, isModalOpen, openModal: () => setIsModalOpen(true) };
+}
+
+// ✅ GOOD - Separate data fetching from UI state
+export function useAvailableSlots() {
+  const { data } = useSWR('/slots', fetcher);
+  return { slots: data };
+}
+```
+
+---
+
+## Quick Reference
+
+### Common Patterns
+
+| Task | Location | File Name |
+|------|----------|-----------|
+| HTTP client | `shared/api/` | `client.ts` |
+| Error utilities | `shared/api/` | `error-handler.ts` |
+| API service | `entities/[entity]/api/` | `service.ts` |
+| Endpoints | `entities/[entity]/api/` | `endpoints.ts` |
+| Types | `entities/[entity]/model/` | `types.ts` |
+| Schemas | `entities/[entity]/model/` | `schemas.ts` |
+| Data hook | `entities/[entity]/model/` | `use[Entity].ts` |
+| Route handler | `app/api/[...]/` | `route.ts` |
+
+### Import Examples
+
+```typescript
+// Shared utilities
+import { apiClient, handleApiError } from '@/shared/api';
+
+// Entity service
+import { appointmentService } from '@/entities/appointment';
+
+// Entity types
+import type { HoldSlotRequest } from '@/entities/appointment';
+
+// Entity hooks
+import { useAvailableSlots } from '@/entities/appointment';
+```
+
+---
+
+**Last Updated**: January 2026  
+**FSD Version**: 2.1  
+**Next.js Version**: 16.x
+
